@@ -15,7 +15,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nonnull;
 import javax.annotation.Priority;
@@ -35,7 +34,6 @@ import org.robolectric.internal.MavenManifestFactory;
 import org.robolectric.internal.ResourcesMode;
 import org.robolectric.internal.SandboxManager;
 import org.robolectric.internal.SandboxTestRunner;
-import org.robolectric.internal.ShadowProvider;
 import org.robolectric.internal.bytecode.ClassHandler;
 import org.robolectric.internal.bytecode.InstrumentationConfiguration;
 import org.robolectric.internal.bytecode.InstrumentationConfiguration.Builder;
@@ -78,8 +76,8 @@ public class RobolectricTestRunner extends SandboxTestRunner {
   private final SandboxManager sandboxManager;
   private final SdkPicker sdkPicker;
   private final ConfigurationStrategy configurationStrategy;
+  private final AndroidConfigurer androidConfigurer;
 
-  private ServiceLoader<ShadowProvider> providers;
   private final ResModeStrategy resModeStrategy = getResModeStrategy();
   private boolean alwaysIncludeVariantMarkersInName =
       Boolean.parseBoolean(
@@ -106,6 +104,7 @@ public class RobolectricTestRunner extends SandboxTestRunner {
     this.sandboxManager = injector.getInstance(SandboxManager.class);
     this.sdkPicker = injector.getInstance(SdkPicker.class);
     this.configurationStrategy = injector.getInstance(ConfigurationStrategy.class);
+    this.androidConfigurer = injector.getInstance(AndroidConfigurer.class);
   }
 
   /**
@@ -150,8 +149,8 @@ public class RobolectricTestRunner extends SandboxTestRunner {
     Config config = configuration.get(Config.class);
 
     Builder builder = new Builder(super.createClassLoaderConfig(method));
-    AndroidConfigurer.configure(builder, getInterceptors());
-    AndroidConfigurer.withConfig(builder, config);
+    androidConfigurer.configure(builder, getInterceptors());
+    androidConfigurer.withConfig(builder, config);
     return builder.build();
   }
 
@@ -291,8 +290,6 @@ public class RobolectricTestRunner extends SandboxTestRunner {
     Class<TestLifecycle> cl = androidSandbox.bootstrappedClass(getTestLifecycleClass());
     roboMethod.testLifecycle = ReflectionHelpers.newInstance(cl);
 
-    providers = ServiceLoader.load(ShadowProvider.class, androidSandbox.getRobolectricClassLoader());
-
     AndroidManifest appManifest = roboMethod.getAppManifest();
 
     roboMethod.getEnvironment().setUpApplicationState(
@@ -326,14 +323,8 @@ public class RobolectricTestRunner extends SandboxTestRunner {
     try {
       // reset static state afterward too, so statics don't defeat GC?
       PerfStatsCollector.getInstance()
-          .measure("reset Android state (after test)", () -> {
-            // TODO: roboMethod.sandbox.resetState(); instead
-            if (providers != null) {
-              for (ShadowProvider provider : providers) {
-                provider.reset();
-              }
-            }
-          });
+          .measure(
+              "reset Android state (after test)", () -> roboMethod.getEnvironment().resetState());
     } finally {
       roboMethod.testLifecycle = null;
       roboMethod.clearContext();
